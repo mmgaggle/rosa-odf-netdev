@@ -1,127 +1,182 @@
-- name: Create Provider VPC
-  amazon.aws.ec2_vpc_net:
-    name: odf-provider
-    cidr_block: 10.0.0.0/18
-    region: us-east-1
-    tags:
-      odf: provider
-    tenancy: dedicated
-  register: providerVPC
+---
+    
+- hosts: localhost
+  connection: local
+  vars_files:
+    - "vars/base.yaml"
+  tasks:
+    - name: Create Provider VPC
+      amazon.aws.ec2_vpc_net:
+        name: odf-provider
+        cidr_block: 10.0.0.0/18
+        region: "{{region}}"
+        tags:
+          odf: provider
+        tenancy: dedicated
+      register: providerVPC
+    
+    - name: Create Consumer VPC
+      amazon.aws.ec2_vpc_net:
+        name: odf-consumer
+        cidr_block: 10.0.64.0/18
+        region: "{{region}}"
+        tags:
+          odf: consumer
+        tenancy: dedicated
+      register: consumerVPC
+    
+    # provider
+    - name: Create /21 #1 for {{region}}a
+      amazon.aws.ec2_vpc_subnet:
+        state: present
+        vpc_id: "{{ providerVPC.vpc.id }}"
+        cidr: 10.0.0.0/21
+        region: "{{region}}"
+        az: "{{region}}a"
+        tags:
+          Name: odf-provider-1a1
+    
+    - name: Create /21 #2 for {{region}}a
+      amazon.aws.ec2_vpc_subnet:
+        state: present
+        vpc_id: "{{ providerVPC.vpc.id }}"
+        cidr: 10.0.8.0/21
+        region: "{{region}}"
+        az: "{{region}}a"
+        tags:
+          Name: odf-provider-2a1
+    
+    - name: Create /21 #1 for {{region}}b
+      amazon.aws.ec2_vpc_subnet:
+        state: present
+        vpc_id: "{{ providerVPC.vpc.id }}"
+        cidr: 10.0.16.0/21
+        region: "{{region}}"
+        az: "{{region}}b"
+        tags:
+          Name: odf-provider-2b1
+    
+    - name: Create /21 #2 for {{region}}b
+      amazon.aws.ec2_vpc_subnet:
+        state: present
+        vpc_id: "{{ providerVPC.vpc.id }}"
+        cidr: 10.0.32.0/21
+        region: "{{region}}"
+        az: "{{region}}b"
+        tags:
+          Name: odf-provider-2b2
+    
+    - name: Create /21 #1 for {{region}}c
+      amazon.aws.ec2_vpc_subnet:
+        state: present
+        vpc_id: "{{ providerVPC.vpc.id }}"
+        cidr: 10.0.40.0/21
+        region: "{{region}}"
+        az: "{{region}}c"
+        tags:
+          Name: odf-provider-2c1
+    
+    - name: Create /21 #2 for {{region}}c
+      amazon.aws.ec2_vpc_subnet:
+        state: present
+        vpc_id: "{{ providerVPC.vpc.id }}"
+        cidr: 10.0.48.0/21
+        region: "{{region}}"
+        az: "{{region}}c"
+        tags:
+          Name: odf-provider-2c2
+    
+    # consumer
+    - name: Create /21 #1 for {{region}}a
+      amazon.aws.ec2_vpc_subnet:
+        state: present
+        vpc_id: "{{ consumerVPC.vpc.id }}"
+        cidr: 10.0.64.0/21
+        region: "{{region}}"
+        az: "{{region}}a"
+        tags:
+          Name: odf-consumer-2a1
+    
+    - name: Create /21 #2 for {{region}}a
+      amazon.aws.ec2_vpc_subnet:
+        state: present
+        vpc_id: "{{ consumerVPC.vpc.id }}"
+        cidr: 10.0.72.0/21
+        region: "{{region}}"
+        az: "{{region}}a"
+        tags:
+          Name: odf-consumer-2a2
+    
+    - name: Create /21 #1 for {{region}}b
+      amazon.aws.ec2_vpc_subnet:
+        state: present
+        vpc_id: "{{ consumerVPC.vpc.id }}"
+        cidr: 10.0.80.0/21
+        region: "{{region}}"
+        az: "{{region}}b"
+        tags:
+          Name: odf-consumer-2b1
+    
+    - name: Create /21 #2 for {{region}}b
+      amazon.aws.ec2_vpc_subnet:
+        state: present
+        vpc_id: "{{ consumerVPC.vpc.id }}"
+        cidr: 10.0.96.0/21
+        region: "{{region}}"
+        az: "{{region}}b"
+        tags:
+          Name: odf-consumer-2b2
+    
+    - name: Create /21 #1 for {{region}}c
+      amazon.aws.ec2_vpc_subnet:
+        state: present
+        vpc_id: "{{ consumerVPC.vpc.id }}"
+        cidr: 10.0.104.0/21
+        region: "{{region}}"
+        az: "{{region}}c"
+        tags:
+          Name: odf-consumer-2c1
+    
+    - name: Create /21 #2 for {{region}}c
+      amazon.aws.ec2_vpc_subnet:
+        state: present
+        vpc_id: "{{ consumerVPC.vpc.id }}"
+        cidr: 10.0.112.0/21
+        region: "{{region}}"
+        az: "{{region}}c"
+        tags:
+          Name: odf-consumer-2c2
+    
+    - name: Establish VPC peering between consumer and provider VPCs
+      community.aws.ec2_vpc_peer:
+        region: "{{region}}"
+        vpc_id: "{{ providerVPC.vpc.id }}"
+        peer_vpc_id: "{{ consumerVPC.vpc.id }}"
+        state: present
+        tags:
+          Name: Peering connection for ODF consumer/provider VPCs
+      register: vpc_peer
 
-- name: Create Consumer VPC
-  amazon.aws.ec2_vpc_net:
-    name: odf-consumer
-    cidr_block: 10.0.64.0/18
-    region: us-east-1
-    tags:
-      odf: consumer
-    tenancy: dedicated
-  register: consumerVPC
+    - name: Get list of provider subnets
+      amazon.aws.ec2_vpc_subnet_info:
+        filters:
+          vpc-id: "{{ providerVPC.vpc.id }}"
+      register: provider_subnets
 
-# provider
-- name: Create /21 #1 for us-west-2a
-  amazon.aws.ec2_vpc_subnet:
-    state: present
-    vpc_id: {{ providerVPC.vpc.id }}
-    cidr: 10.0.0.0/21
-    tags:
-      Name: odf-consumer-1a1
+    - name: Get list of provider subnets
+      amazon.aws.ec2_vpc_subnet_info:
+        filters:
+          vpc-id: "{{ consumerVPC.vpc.id }}"
+      register: consumer_subnets 
 
-- name: Create /21 #2 for us-west-2a
-  amazon.aws.ec2_vpc_subnet:
-    state: present
-    vpc_id: {{ providerVPC.vpc.id }}
-    cidr: 10.0.8.0/21
-    tags:
-      Name: odf-consumer-2a1
+    - name: Print provider subnets
+      debug:
+        msg: "{{ item }}"
+      loop:
+        - provider_subnets.subnets|map(attribute='id')|list
 
-- name: Create /21 #1 for us-west-2b
-  amazon.aws.ec2_vpc_subnet:
-    state: present
-    vpc_id: {{ providerVPC.vpc.id }}
-    cidr: 10.0.16.0/21
-    tags:
-      Name: odf-consumer-2b1
-
-- name: Create /21 #2 for us-west-2b
-  amazon.aws.ec2_vpc_subnet:
-    state: present
-    vpc_id: {{ providerVPC.vpc.id }}
-    cidr: 10.0.32.0/21
-    tags:
-      Name: odf-consumer-2b2
-
-- name: Create /21 #1 for us-west-2c
-  amazon.aws.ec2_vpc_subnet:
-    state: present
-    vpc_id: {{ providerVPC.vpc.id }}
-    cidr: 10.0.40.0/21
-    tags:
-      Name: odf-consumer-2c1
-
-- name: Create /21 #2 for us-west-2c
-  amazon.aws.ec2_vpc_subnet:
-    state: present
-    vpc_id: {{ providerVPC.vpc.id }}
-    cidr: 10.0.48.0/21
-    tags:
-      Name: odf-consumer-2c2
-
-# consumer
-- name: Create /21 #1 for us-west-2a
-  amazon.aws.ec2_vpc_subnet:
-    state: present
-    vpc_id: {{ consumerVPC.vpc.id }}
-    cidr: 10.0.64.0/21
-    tags:
-      Name: odf-consumer-2a1
-
-- name: Create /21 #2 for us-west-2a
-  amazon.aws.ec2_vpc_subnet:
-    state: present
-    vpc_id: {{ consumerVPC.vpc.id }}
-    cidr: 10.0.72.0/21
-    tags:
-      Name: odf-consumer-2a2
-
-- name: Create /21 #1 for us-west-2b
-  amazon.aws.ec2_vpc_subnet:
-    state: present
-    vpc_id: {{ consumerVPC.vpc.id }}
-    cidr: 10.0.80.0/21
-    tags:
-      Name: odf-consumer-2b1
-
-- name: Create /21 #2 for us-west-2b
-  amazon.aws.ec2_vpc_subnet:
-    state: present
-    vpc_id: {{ consumerVPC.vpc.id }}
-    cidr: 10.0.96.0/21
-    tags:
-      Name: odf-consumer-2b2
-
-- name: Create /21 #1 for us-west-2c
-  amazon.aws.ec2_vpc_subnet:
-    state: present
-    vpc_id: {{ consumerVPC.vpc.id }}
-    cidr: 10.0.104.0/21
-    tags:
-      Name: odf-consumer-2c1
-
-- name: Create /21 #2 for us-west-2c
-  amazon.aws.ec2_vpc_subnet:
-    state: present
-    vpc_id: {{ consumerVPC.vpc.id }}
-    cidr: 10.0.112.0/21
-    tags:
-      Name: odf-consumer-2c2
-
-- name: Establish VPC peering between consumer and provider VPCs
-  community.aws.ec2_vpc_peer:
-    region: us-west-2
-    vpc_id: {{ providerVPC.vpc.id }}
-    peer_vpc_id: {{ consumerVPC.vpc.id }}
-    state: present
-    tags:
-      Name: Peering connection for ODF consumer/provider VPCs
-  register: vpc_peer
+    - name: Print consumer subnets
+      debug:
+        msg: "{{ item }}"
+      loop:
+        - consumer_subnets.subnets|map(attribute='id')|list
