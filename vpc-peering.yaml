@@ -46,7 +46,7 @@
         - { az: "{{ region }}a", cidr: 10.0.32.0/21 }
         - { az: "{{ region }}b", cidr: 10.0.40.0/21 }
         - { az: "{{ region }}c", cidr: 10.0.48.0/21 }
-      register: providerSubs
+      register: providerPrivateSubnets
     
     - name: Get list of provider private subnets
       amazon.aws.ec2_vpc_subnet_info:
@@ -66,7 +66,7 @@
         region: "{{ region }}"
         vpc_id: "{{ providerVPC.vpc.id }}"
         tags:
-          Name: "Private"
+          Name: "odf-provider-public"
         subnets: "{{ providerPrivateSubnets.subnets|map(attribute='id')|list }}"
         routes:
           - dest: 0.0.0.0/0
@@ -150,7 +150,7 @@
         cidr: "{{ item.cidr }}"
         az: "{{ item.az }}"
         tags:
-          Name: odf-consumer
+          Name: "odf-consumer-{{ item.az }}"
           Type: private
       loop:
         - { az: "{{ region }}a", cidr: 10.0.96.0/21 }
@@ -176,7 +176,7 @@
         region: "{{ region }}"
         vpc_id: "{{ consumerVPC.vpc.id }}"
         tags:
-          Name: "Private"
+          Name: "odf-consumer-public""
         subnets: "{{ consumerPrivateSubnets.subnets|map(attribute='id')|list }}"
         routes:
           - dest: 0.0.0.0/0
