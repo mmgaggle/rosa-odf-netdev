@@ -1,2 +1,3 @@
 region: us-west-2
-
+private: true
+shared_vpc: false
