@@ -1,0 +1,245 @@
+---
+    
+- hosts: localhost
+  connection: local
+  vars_files:
+    - "vars/base.yaml"
+  tasks:
+    - name: Create Provider VPC
+      amazon.aws.ec2_vpc_net:
+        name: odf-provider
+        cidr_block: 10.0.0.0/18
+        region: "{{region}}"
+        tags:
+          odf: provider
+        tenancy: dedicated
+      register: providerVPC
+    
+    - name: Create Provider public /21 subnets
+      amazon.aws.ec2_vpc_subnet:
+        state: present
+        region: "{{region}}"
+        vpc_id: "{{ providerVPC.vpc.id }}"
+        cidr: "{{ item.cidr }}"
+        az: "{{ item.az }}"
+        tags:
+          Name: "odf-provider-public-{{ item.az}}"
+          Type: public
+      loop:
+        - { az: "{{ region }}a", cidr: 10.0.0.0/26 }
+        - { az: "{{ region }}b", cidr: 10.0.0.64/26 }
+        - { az: "{{ region }}c", cidr: 10.0.0.128/26 }
+      register: providerPrivateSubnets
+    
+    - name: Create Provider private /21 subnets
+      amazon.aws.ec2_vpc_subnet:
+        state: present
+        region: "{{region}}"
+        vpc_id: "{{ providerVPC.vpc.id }}"
+        cidr: "{{ item.cidr }}"
+        az: "{{ item.az }}"
+        tags:
+          Name: "odf-provider-private-{{ item.az}}"
+          Type: private
+      loop:
+        - { az: "{{ region }}a", cidr: 10.0.32.0/21 }
+        - { az: "{{ region }}b", cidr: 10.0.40.0/21 }
+        - { az: "{{ region }}c", cidr: 10.0.48.0/21 }
+      register: providerPrivateSubnets
+      when: privateLink == False
+    
+    - name: Get list of provider private subnets
+      amazon.aws.ec2_vpc_subnet_info:
+        filters:
+          vpc-id: "{{ providerVPC.vpc.id }}"
+          "tag:Type": "private"
+      register: providerPrivateSubnets
+
+    - name: Create Provider IGW
+      amazon.aws.ec2_vpc_igw:
+        state: present
+        vpc_id: "{{ providerVPC.vpc.id }}"
+      register: providerIGW
+    
+    - name: Create Provider public route table
+      amazon.aws.ec2_vpc_route_table:
+        region: "{{ region }}"
+        vpc_id: "{{ providerVPC.vpc.id }}"
+        tags:
+          Name: "odf-provider-public"
+        subnets: "{{ providerPublicSubnets.subnets|map(attribute='id')|list }}"
+        routes:
+          - dest: 0.0.0.0/0
+            gateway_id: "{{ providerIGW.gateway_id }}"
+      when: private == True
+
+    - name: Create Provider NAT Gateways
+      amazon.aws.ec2_vpc_nat_gateway:
+        state: present
+        region: "{{ region }}"
+        subnet_id: "{{ item.subnet_id }}"
+        tags:
+          Name: "odf-provider-{{ item.availability_zone}}"
+          Type: "odf-provider"
+        wait: true
+        if_exist_do_not_create: true
+        release_eip: true
+      loop: "{{ providerPrivateSubnets.subnets }}"
+      when: private == True
+      register: providerNAT
+
+    - name: Get details on NAT Gateways
+      amazon.aws.ec2_vpc_nat_gateway_info:
+        region: "{{ region }}"
+        filters:
+          "tag:Type": "odf-provider"
+      register: providerNAT
+
+    # needs to be a loop, route table per subnet, nat vpce per subnet
+    - name: Create Provider private route tables
+      amazon.aws.ec2_vpc_route_table:
+        region: "{{ region }}"
+        vpc_id: "{{ providerVPC.vpc.id }}"
+        tags:
+          Name: "odf-provider-private"
+        subnets:
+          - "{{ item.subnet_id }}"
+        routes:
+          - dest: 0.0.0.0/0
+            gateway_id: "{{ item.nat_gateway_id }}"
+      when: private == True
+      loop: "{{ providerNAT.result }}"
+
+    ## Consumer
+    ## TODO: shared_vpc conditional var
+    ##  * skip creation of consumer VPC
+    ##  * create consumer subnets in provider VPC
+    ##  * skip VPC peering (done)
+    ##
+    - name: Create Consumer VPC
+      amazon.aws.ec2_vpc_net:
+        name: odf-consumer
+        cidr_block: 10.0.64.0/18
+        region: "{{region}}"
+        tags:
+          odf: consumer
+        tenancy: dedicated
+      register: consumerVPC
+
+    - name: Create Consumer public /21 subnets
+      amazon.aws.ec2_vpc_subnet:
+        state: present
+        region: "{{region}}"
+        vpc_id: "{{ consumerVPC.vpc.id }}"
+        cidr: "{{ item.cidr }}"
+        az: "{{ item.az }}"
+        tags:
+          Name: odf-consumer
+          Type: public
+      loop:
+        - { az: "{{ region }}a", cidr: 10.0.64.0/21 }
+        - { az: "{{ region }}b", cidr: 10.0.72.0/21 }
+        - { az: "{{ region }}c", cidr: 10.0.80.0/21 }
+      register: consumerPublicSubnets
+
+    - name: Create Consumer private /21 subnets
+      amazon.aws.ec2_vpc_subnet:
+        state: present
+        region: "{{region}}"
+        vpc_id: "{{ consumerVPC.vpc.id }}"
+        cidr: "{{ item.cidr }}"
+        az: "{{ item.az }}"
+        tags:
+          Name: "odf-consumer-{{ item.az }}"
+          Type: private
+      loop:
+        - { az: "{{ region }}a", cidr: 10.0.96.0/21 }
+        - { az: "{{ region }}b", cidr: 10.0.104.0/21 }
+        - { az: "{{ region }}c", cidr: 10.0.112.0/21 }
+      register: consumerPrivateSubnets
+    
+    - name: Get list of consumer subnets
+      amazon.aws.ec2_vpc_subnet_info:
+        filters:
+          vpc-id: "{{ consumerVPC.vpc.id }}"
+          "tag:Type": "private"
+      register: consumerPrivateSubnets
+
+    - name: Create Consumer IGW
+      amazon.aws.ec2_vpc_igw:
+        state: present
+        vpc_id: "{{ consumerVPC.vpc.id }}"
+      register: consumerIGW
+
+    - name: Create Consumer public route table
+      amazon.aws.ec2_vpc_route_table:
+        region: "{{ region }}"
+        vpc_id: "{{ consumerVPC.vpc.id }}"
+        tags:
+          Name: "odf-consumer-public"
+        subnets: "{{ consumerPublicSubnets.subnets|map(attribute='id')|list }}"
+        routes:
+          - dest: 0.0.0.0/0
+            gateway_id: "{{ consumerIGW.gateway_id }}"
+      when: private == True
+
+    - name: Create Consumer NAT Gateway
+      amazon.aws.ec2_vpc_nat_gateway:
+        state: present
+        region: "{{ region }}"
+        subnet_id: "{{ item.subnet_id }}"
+        tags:
+          Name: "odf-consumer-{{ item.availability_zone}}"
+          Type: "odf-consumer"
+        wait: true
+        if_exist_do_not_create: true
+        release_eip: true
+      loop: "{{ consumerPrivateSubnets.subnets }}"
+      register: consumerNAT
+
+    - name: Get details on Consumer NAT Gateways
+      amazon.aws.ec2_vpc_nat_gateway_info:
+        region: "{{ region }}"
+        filters:
+          "tag:Type": "odf-consumer"
+      register: consumerNAT
+
+    # needs to be a loop, route table per subnet, nat vpce per subnet
+    - name: Create Consumer private route tables
+      amazon.aws.ec2_vpc_route_table:
+        region: "{{ region }}"
+        vpc_id: "{{ consumerVPC.vpc.id }}"
+        tags:
+          Name: "odf-consumer-private"
+        subnets:
+          - "{{ item.subnet_id }}"
+        routes:
+          - dest: 0.0.0.0/0
+            gateway_id: "{{ item.nat_gateway_id }}"
+      when: private == True
+      loop: "{{ consumerNAT.result }}"
+
+    - name: Establish VPC peering between consumer and provider VPCs
+      community.aws.ec2_vpc_peer:
+        region: "{{region}}"
+        vpc_id: "{{ providerVPC.vpc.id }}"
+        peer_vpc_id: "{{ consumerVPC.vpc.id }}"
+        state: present
+        tags:
+          Name: Peering connection for ODF consumer/provider VPCs
+      when: shared_vpc == False
+      register: vpc_peer
+
+    - name: Provider Private subnets
+      debug:
+        msg: "{{ providerPrivateSubnets.subnets|map(attribute='id')|list }}"
+
+    - name: Consumer subnets
+      debug:
+        msg: "{{ consumerPrivateSubnets.subnets|map(attribute='id')|list }}"
+
+    # - name: Create provider cluster
+    #  command: rosa create cluster --cluster-name odf-consumer --sts --role-arn arn:aws:iam::618150459994:role/ManagedOpenShift-Installer-Role --support-role-arn arn:aws:iam::618150459994:role/ManagedOpenShift-Support-Role --controlplane-iam-role arn:aws:iam::618150459994:role/ManagedOpenShift-ControlPlane-Role --worker-iam-role arn:aws:iam::618150459994:role/ManagedOpenShift-Worker-Role --operator-roles-prefix odf-consumer-u1d6 --multi-az --region us-west-2 --version 4.8.23 --compute-nodes 3 --compute-machine-type m5.2xlarge --machine-cidr 10.0.64.0/18 --service-cidr 172.30.0.0/16 --pod-cidr 10.128.0.0/14 --host-prefix 23 --private-link --subnet-ids subnet-078f0d7917c8154ff,subnet-09716e5c57647aa0c,subnet-069423a596123145e --etcd-encryption
+
+    # - name: Create consumer cluster
+    #  command: "rosa create cluster --cluster-name odf-consumer --sts --role-arn arn:aws:iam::618150459994:role/ManagedOpenShift-Installer-Role --support-role-arn arn:aws:iam::618150459994:role/ManagedOpenShift-Support-Role --controlplane-iam-role arn:aws:iam::618150459994:role/ManagedOpenShift-ControlPlane-Role --worker-iam-role arn:aws:iam::618150459994:role/ManagedOpenShift-Worker-Role --operator-roles-prefix odf-consumer-u1d6 --multi-az --region us-west-2 --version 4.8.23 --compute-nodes 3 --compute-machine-type m5.2xlarge --machine-cidr 10.0.64.0/18 --service-cidr 172.30.0.0/16 --pod-cidr 10.128.0.0/14 --host-prefix 23 --private-link --subnet-ids subnet-078f0d7917c8154ff,subnet-09716e5c57647aa0c,subnet-069423a596123145e --etcd-encryption"
